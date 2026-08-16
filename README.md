@@ -23,6 +23,25 @@ npm run dev
 
 브라우저에서 `http://localhost:5173`으로 접속합니다.
 
+## 데스크톱 앱 (Windows)
+
+Electron으로 감싼 데스크톱 앱입니다. [Releases](https://github.com/hslcrb/figedit/releases)에서
+`FigEdit-<버전>-win.zip`을 받아 압축을 풀고 `FigEdit.exe`를 실행하면 됩니다 (별도 설치 불필요).
+
+로컬에서 Windows용 빌드:
+
+```bash
+npm install
+npm run dist:win     # release/FigEdit-<버전>-win.zip 생성
+```
+
+Electron 개발 실행:
+
+```bash
+npm run dev          # 터미널 1: Vite dev server
+npm run electron:dev # 터미널 2: Electron으로 dev 서버 로드
+```
+
 ## 스크립트
 
 | 명령 | 설명 |
@@ -32,6 +51,8 @@ npm run dev
 | `npm run lint` | oxlint 실행 |
 | `npm test` | vitest 테스트 실행 |
 | `npm run preview` | 빌드 결과 미리보기 |
+| `npm run dist:win` | Windows용 Electron 앱 패키징 (zip) |
+| `npm run electron:dev` | Electron + Vite dev 서버 실행 |
 
 ## 기술 스택
 
@@ -40,6 +61,7 @@ npm run dev
 - [zustand](https://github.com/pmndrs/zustand) — 상태 관리
 - HTML5 Canvas — 문서 렌더링
 - [vitest](https://vitest.dev) — 유닛 테스트
+- [Electron](https://www.electronjs.org) + electron-builder — 데스크톱 패키징
 
 ## 구조
 
@@ -53,4 +75,6 @@ src/
 │   └── zip.ts         # .fig ZIP 읽기/쓰기
 ├── store/editor.ts    # zustand 스토어 (히스토리 포함)
 └── types/figma.ts     # Figma 문서 타입 정의
+electron/
+└── main.mjs           # Electron 메인 프로세스
 ```
