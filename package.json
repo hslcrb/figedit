@@ -1,8 +1,8 @@
 {
-  "name": "figedit",
+  "name": "labelstudio",
   "private": true,
-  "version": "1.0.0",
-  "description": "Figma .fig 파일을 브라우저에서 열고 편집하는 로컬 웹 에디터",
+  "version": "1.1.0",
+  "description": "FIG 호환성과 결정론적 코드 핸드오프를 제공하는 로컬 디자인 작업공간",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
@@ -11,31 +11,40 @@
     "lint": "oxlint",
     "test": "vitest run",
     "preview": "vite preview",
-    "electron:dev": "VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
-    "dist:win": "npm run build && electron-builder --win zip --x64",
+    "electron:dev": "cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
+    "server:dev": "tsx watch server/index.ts",
+    "server": "tsx server/index.ts",
+    "server:typecheck": "tsc -p tsconfig.server.json --noEmit",
+    "dist:win": "npm run build && electron-builder --win nsis --x64",
+    "dist:win:zip": "npm run build && electron-builder --win zip --x64",
+    "dist:win:portable": "npm run build && electron-builder --win portable --x64",
     "dist:linux": "npm run build && electron-builder --linux AppImage --x64"
   },
   "dependencies": {
     "fflate": "^0.8.3",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "zustand": "^5.0.15"
+    "zustand": "^5.0.15",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",
+    "cross-env": "^10.1.0",
     "electron": "^37.2.0",
     "electron-builder": "^26.0.12",
     "oxlint": "^1.75.0",
+    "tsx": "^4.20.5",
     "typescript": "~6.0.2",
     "vite": "^8.2.0",
+    "@types/ws": "^8.18.1",
     "vitest": "^4.1.10"
   },
   "build": {
-    "appId": "com.hslcrb.figedit",
-    "productName": "FigEdit",
+    "appId": "com.hslcrb.labelstudio",
+    "productName": "LabelStudio",
     "directories": {
       "output": "release"
     },
@@ -50,7 +59,7 @@
     "win": {
       "target": [
         {
-          "target": "zip",
+          "target": "nsis",
           "arch": ["x64"]
         }
       ],

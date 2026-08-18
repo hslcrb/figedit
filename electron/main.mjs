@@ -11,9 +11,9 @@ function createWindow() {
     height: 900,
     minWidth: 960,
     minHeight: 600,
-    title: "FigEdit",
+    title: "LabelStudio",
     autoHideMenuBar: true,
-    backgroundColor: "#f4f4f5",
+    backgroundColor: "#111111",
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

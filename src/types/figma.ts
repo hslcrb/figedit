@@ -1,3 +1,5 @@
+import type { CodeComponentBinding, DesignToken, LabelMedia, LabelPath, MediaAsset, PrototypeInteraction } from "./design";
+
 export interface Vec2 {
   x: number;
   y: number;
@@ -131,6 +133,21 @@ export interface FigmaNode {
   textAutoResize?: "NONE" | "HEIGHT" | "WIDTH_AND_HEIGHT";
   preserveRatio?: boolean;
   exportSettings?: unknown[];
+  labelFillTokenId?: string;
+  labelComponentId?: string;
+  labelComponentName?: string;
+  labelImportPath?: string;
+  labelSemantic?: "auto" | "button" | "link" | "heading" | "list" | "image" | "decorative";
+  labelAccessibleName?: string;
+  labelPrototype?: PrototypeInteraction;
+  labelPath?: LabelPath;
+  labelMedia?: LabelMedia;
+  layoutSizingHorizontal?: "FIXED" | "HUG" | "FILL";
+  layoutSizingVertical?: "FIXED" | "HUG" | "FILL";
+  studioGlass?: {
+    enabled: boolean;
+    blur: number;
+  };
   children?: FigmaNode[];
   [key: string]: unknown;
 }
@@ -142,6 +159,10 @@ export interface FigmaDocument {
   thumbnailUrl?: string | null;
   schemaVersion?: number;
   document: FigmaNode;
+  labelTokens?: DesignToken[];
+  labelAssets?: Record<string, MediaAsset>;
+  labelCodeComponents?: CodeComponentBinding[];
+  labelPrototype?: PrototypeInteraction[];
   [key: string]: unknown;
 }
 
@@ -176,6 +197,8 @@ export const NODE_TYPES = [
 ] as const;
 
 export type FigmaNodeType = (typeof NODE_TYPES)[number];
+
+export type DesignTool = "SELECT" | "FRAME" | "RECTANGLE" | "ELLIPSE" | "TEXT" | "PEN";
 
 export function isContainerNode(node: FigmaNode): boolean {
   return Array.isArray(node.children);

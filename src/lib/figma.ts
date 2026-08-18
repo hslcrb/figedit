@@ -1,5 +1,6 @@
 import type { FigmaDocument, FigmaNode, FigmaNodeType } from "../types/figma";
 import { getNodeBounds, isContainerNode } from "../types/figma";
+import { DEFAULT_DESIGN_TOKENS } from "../types/design";
 
 let idCounter = 100;
 
@@ -12,6 +13,16 @@ function nextId(): string {
 
 export function resetIdCounter(): void {
   idCounter = 100;
+}
+
+export function syncIdCounter(root: FigmaNode): void {
+  let maximum = idCounter;
+  walk(root, (node) => {
+    const match = node.id?.match(/^(\d+):(\d+)$/);
+    if (!match) return;
+    maximum = Math.max(maximum, Number(match[1]) * 1000 + Number(match[2]));
+  });
+  idCounter = maximum;
 }
 
 function clone<T>(value: T): T {
@@ -115,7 +126,7 @@ export function makeNode(
     case "GROUP": {
       base.clipContent = type === "FRAME";
       base.fills = [
-        { type: "SOLID", color: { r: 0.9, g: 0.9, b: 0.93 }, opacity: 1 },
+        { type: "SOLID", color: { r: 1, g: 1, b: 1 }, opacity: 1 },
       ];
       base.layoutMode = "NONE";
       base.children = [];
@@ -125,7 +136,7 @@ export function makeNode(
       break;
     }
     case "RECTANGLE": {
-      base.fills = [{ type: "SOLID", color: { r: 0.4, g: 0.5, b: 1 }, opacity: 1 }];
+      base.fills = [{ type: "SOLID", color: { r: 0.85, g: 1, b: 0.29 }, opacity: 1 }];
       base.cornerRadius = 0;
       base.strokes = [];
       base.effects = [];
@@ -133,7 +144,7 @@ export function makeNode(
       break;
     }
     case "ELLIPSE": {
-      base.fills = [{ type: "SOLID", color: { r: 0.4, g: 0.8, b: 0.6 }, opacity: 1 }];
+      base.fills = [{ type: "SOLID", color: { r: 1, g: 0.96, b: 0.64 }, opacity: 1 }];
       base.strokes = [];
       base.effects = [];
       break;
@@ -164,7 +175,7 @@ export function makeNode(
       break;
     }
     default: {
-      base.fills = [{ type: "SOLID", color: { r: 0.6, g: 0.4, b: 0.8 }, opacity: 1 }];
+      base.fills = [{ type: "SOLID", color: { r: 0.92, g: 0.92, b: 0.9 }, opacity: 1 }];
       base.strokes = [];
       base.effects = [];
     }
@@ -308,10 +319,13 @@ export function countNodes(node: FigmaNode): number {
 }
 
 export function randomFill(): FigmaNode["fills"] {
-  const r = Math.random();
-  const g = Math.random();
-  const b = Math.random();
-  return [{ type: "SOLID", color: { r, g, b }, opacity: 1 }];
+  const palette = [
+    { r: 0.85, g: 1, b: 0.29 },
+    { r: 1, g: 0.96, b: 0.64 },
+    { r: 0.14, g: 0.14, b: 0.14 },
+    { r: 1, g: 1, b: 1 },
+  ];
+  return [{ type: "SOLID", color: palette[Math.floor(Math.random() * palette.length)], opacity: 1 }];
 }
 
 export function createNewDocument(fileName = "새 파일.fig"): { doc: FigmaDocument; fileName: string } {
@@ -331,14 +345,15 @@ export function createNewDocument(fileName = "새 파일.fig"): { doc: FigmaDocu
     width: 280,
     height: 160,
     cornerRadius: 16,
-    fills: [{ type: "SOLID", color: { r: 0.2, g: 0.55, b: 0.95 }, opacity: 1 }],
+    fills: [{ type: "SOLID", color: { r: 0.85, g: 1, b: 0.29 }, opacity: 0.78 }],
+    studioGlass: { enabled: true, blur: 18 },
   });
   const text = makeNode("TEXT", frame, {
     name: "텍스트",
     x: 48,
     y: 300,
     width: 280,
-    characters: "FigEdit",
+    characters: "LabelStudio",
     style: {
       fontFamily: "Inter",
       fontPostScriptName: "Inter-SemiBold",
@@ -354,7 +369,7 @@ export function createNewDocument(fileName = "새 파일.fig"): { doc: FigmaDocu
     y: 400,
     width: 120,
     height: 120,
-    fills: [{ type: "SOLID", color: { r: 0.96, g: 0.62, b: 0.1 }, opacity: 1 }],
+    fills: [{ type: "SOLID", color: { r: 1, g: 0.96, b: 0.64 }, opacity: 1 }],
   });
 
   page.children = [frame];
@@ -365,6 +380,27 @@ export function createNewDocument(fileName = "새 파일.fig"): { doc: FigmaDocu
     version: "1.0.0",
     lastModified: new Date().toISOString(),
     thumbnailUrl: null,
+    labelTokens: DEFAULT_DESIGN_TOKENS.map((token) => ({ ...token })),
+    document: {
+      id: "0:0",
+      type: "DOCUMENT",
+      name: "Document",
+      children: [page],
+    },
+  };
+  return { doc, fileName };
+}
+
+export function createBlankDocument(fileName = "새 디자인.fig"): { doc: FigmaDocument; fileName: string } {
+  const page = makeNode("PAGE", { children: [] } as unknown as FigmaNode, { name: "시작 페이지" });
+  page.children = [];
+  const doc: FigmaDocument = {
+    name: fileName.replace(/\.fig$/i, ""),
+    version: "1.0.0",
+    lastModified: new Date().toISOString(),
+    thumbnailUrl: null,
+    schemaVersion: 1,
+    labelTokens: DEFAULT_DESIGN_TOKENS.map((token) => ({ ...token })),
     document: {
       id: "0:0",
       type: "DOCUMENT",

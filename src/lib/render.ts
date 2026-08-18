@@ -1,6 +1,7 @@
 import type { FigmaNode, Paint } from "../types/figma";
 import { getNodeBounds, isContainerNode, visibleFill } from "../types/figma";
 import { apply, identity, invert, multiply, rotation, scaling, scaleOf, translation, type Mat } from "./matrix";
+import { traceLabelPath } from "./path";
 
 export interface Viewport {
   x: number;
@@ -11,8 +12,11 @@ export interface Viewport {
 export interface RenderOptions {
   viewport: Viewport;
   selectedId: string | null;
-  hoverId: string | null;
+  selectedIds?: string[];
   dpr: number;
+  hoverId?: string | null;
+  assets?: Record<string, Uint8Array>;
+  onAssetLoad?: () => void;
 }
 
 function rgbaToCss(r: number, g: number, b: number, a: number): string {
@@ -32,7 +36,7 @@ export function localTransform(node: FigmaNode): Mat {
   const b = getNodeBounds(node);
   const cx = b.width / 2;
   const cy = b.height / 2;
-  return multiply(translation(b.x, b.y), multiply(translation(cx, cy), rotation(rotationDeg(node.rotation))));
+  return multiply(translation(b.x, b.y), multiply(translation(cx, cy), multiply(rotation(rotationDeg(node.rotation)), translation(-cx, -cy))));
 }
 
 export function worldTransform(node: FigmaNode, parentWorld: Mat = identity()): Mat {
@@ -78,7 +82,7 @@ function setFillStyle(ctx: CanvasRenderingContext2D, paint: Paint | undefined, a
     case "SOLID": {
       if (!paint.color) return false;
       ctx.fillStyle = rgbaToCss(paint.color.r, paint.color.g, paint.color.b, paint.color.a ?? 1);
-      ctx.globalAlpha = alpha;
+      ctx.globalAlpha = alpha * (paint.opacity ?? 1);
       return true;
     }
     case "GRADIENT_LINEAR": {
@@ -93,7 +97,7 @@ function setFillStyle(ctx: CanvasRenderingContext2D, paint: Paint | undefined, a
         );
       }
       ctx.fillStyle = gradient;
-      ctx.globalAlpha = alpha;
+      ctx.globalAlpha = alpha * (paint.opacity ?? 1);
       return true;
     }
     default:
@@ -101,10 +105,10 @@ function setFillStyle(ctx: CanvasRenderingContext2D, paint: Paint | undefined, a
   }
 }
 
-function drawFill(ctx: CanvasRenderingContext2D, paint: Paint, alpha: number): boolean {
+function drawFill(ctx: CanvasRenderingContext2D, paint: Paint, alpha: number, fillRule: CanvasFillRule = "nonzero"): boolean {
   const ok = setFillStyle(ctx, paint, alpha);
   if (!ok) return false;
-  ctx.fill();
+  ctx.fill(fillRule);
   return true;
 }
 
@@ -112,11 +116,93 @@ function drawStroke(ctx: CanvasRenderingContext2D, paint: Paint, alpha: number, 
   if (!paint || paint.visible === false || weight <= 0) return;
   if (paint.type !== "SOLID" || !paint.color) return;
   ctx.strokeStyle = rgbaToCss(paint.color.r, paint.color.g, paint.color.b, paint.color.a ?? 1);
-  ctx.globalAlpha = alpha;
+  ctx.globalAlpha = alpha * (paint.opacity ?? 1);
   ctx.lineWidth = weight;
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
   ctx.stroke();
+}
+
+interface ImageCacheEntry {
+  state: "loading" | "ready" | "error";
+  image?: HTMLImageElement;
+}
+
+const imageCache = new Map<string, ImageCacheEntry>();
+
+function imageFor(paint: Paint, opts: RenderOptions): HTMLImageElement | null {
+  const path = paint.imageRef;
+  const bytes = path ? opts.assets?.[path] : undefined;
+  if (!path || !bytes) return null;
+  const cached = imageCache.get(path);
+  if (cached?.state === "ready") return cached.image ?? null;
+  if (cached?.state === "loading") return null;
+  const image = new Image();
+  imageCache.set(path, { state: "loading" });
+  const url = URL.createObjectURL(new Blob([bytes as BlobPart]));
+  image.onload = () => {
+    URL.revokeObjectURL(url);
+    imageCache.set(path, { state: "ready", image });
+    opts.onAssetLoad?.();
+  };
+  image.onerror = () => {
+    URL.revokeObjectURL(url);
+    imageCache.set(path, { state: "error" });
+    opts.onAssetLoad?.();
+  };
+  image.src = url;
+  return null;
+}
+
+function drawImagePaint(ctx: CanvasRenderingContext2D, node: FigmaNode, paint: Paint, alpha: number, opts: RenderOptions): boolean {
+  const image = imageFor(paint, opts);
+  const bounds = getNodeBounds(node);
+  if (!image) {
+    ctx.fillStyle = "#242424";
+    ctx.globalAlpha = alpha * (paint.opacity ?? 1);
+    ctx.fill();
+    return true;
+  }
+  const media = node.labelMedia;
+  const crop = media?.crop ?? { x: 0, y: 0, width: 1, height: 1 };
+  let sourceX = image.naturalWidth * crop.x;
+  let sourceY = image.naturalHeight * crop.y;
+  let sourceWidth = image.naturalWidth * crop.width;
+  let sourceHeight = image.naturalHeight * crop.height;
+  const scaleMode = paint.scaleMode ?? "CROP";
+  if (scaleMode === "CROP" && bounds.width > 0 && bounds.height > 0) {
+    const targetRatio = bounds.width / bounds.height;
+    const sourceRatio = sourceWidth / Math.max(sourceHeight, 1);
+    if (sourceRatio > targetRatio) {
+      const nextWidth = sourceHeight * targetRatio;
+      sourceX += (sourceWidth - nextWidth) / 2;
+      sourceWidth = nextWidth;
+    } else {
+      const nextHeight = sourceWidth / targetRatio;
+      sourceY += (sourceHeight - nextHeight) / 2;
+      sourceHeight = nextHeight;
+    }
+  }
+  let destinationX = 0;
+  let destinationY = 0;
+  let destinationWidth = bounds.width;
+  let destinationHeight = bounds.height;
+  if (scaleMode === "FIT") {
+    const ratio = Math.min(bounds.width / Math.max(sourceWidth, 1), bounds.height / Math.max(sourceHeight, 1));
+    destinationWidth = sourceWidth * ratio;
+    destinationHeight = sourceHeight * ratio;
+    destinationX = (bounds.width - destinationWidth) / 2;
+    destinationY = (bounds.height - destinationHeight) / 2;
+  }
+  tracePath(ctx, node);
+  ctx.save();
+  ctx.clip();
+  const adjustment = media?.adjustments;
+  ctx.filter = adjustment ? `brightness(${1 + adjustment.brightness}) contrast(${1 + adjustment.contrast}) saturate(${1 + adjustment.saturation}) grayscale(${adjustment.grayscale}) blur(${Math.max(0, adjustment.blur)}px)` : "none";
+  ctx.globalAlpha = alpha * (paint.opacity ?? 1);
+  ctx.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, destinationX, destinationY, destinationWidth, destinationHeight);
+  ctx.restore();
+  return true;
 }
 
 function tracePath(ctx: CanvasRenderingContext2D, node: FigmaNode): void {
@@ -132,6 +218,14 @@ function tracePath(ctx: CanvasRenderingContext2D, node: FigmaNode): void {
       ctx.moveTo(0, 0);
       ctx.lineTo(width, height);
       break;
+    case "VECTOR":
+      if (node.labelPath) {
+        traceLabelPath(ctx, node.labelPath);
+        break;
+      }
+      ctx.beginPath();
+      ctx.rect(0, 0, width, height);
+      break;
     case "RECTANGLE":
     case "FRAME":
     case "COMPONENT":
@@ -139,7 +233,6 @@ function tracePath(ctx: CanvasRenderingContext2D, node: FigmaNode): void {
     case "INSTANCE":
     case "SECTION":
     case "BOOLEAN_OPERATION":
-    case "VECTOR":
     case "SHAPE_WITH_TEXT":
     case "TABLE":
     case "TABLE_CELL": {
@@ -234,7 +327,7 @@ function drawText(ctx: CanvasRenderingContext2D, node: FigmaNode, alpha: number)
   ctx.fillText(text, x, y, b.width);
 }
 
-function drawShapeBody(ctx: CanvasRenderingContext2D, node: FigmaNode, alpha: number): void {
+function drawShapeBody(ctx: CanvasRenderingContext2D, node: FigmaNode, alpha: number, opts: RenderOptions): void {
   const fills = node.fills ?? [];
   const hasAnyFill = fills.some((f) => f.visible !== false);
   const strokes = node.strokes ?? [];
@@ -248,8 +341,11 @@ function drawShapeBody(ctx: CanvasRenderingContext2D, node: FigmaNode, alpha: nu
   if (hasAnyFill) {
     tracePath(ctx, node);
     for (const paint of fills) {
-      if (paint.type === "IMAGE") continue;
-      if (drawFill(ctx, paint, alpha)) break;
+      if (paint.type === "IMAGE") {
+        if (drawImagePaint(ctx, node, paint, alpha, opts)) break;
+        continue;
+      }
+      if (drawFill(ctx, paint, alpha, node.labelPath?.fillRule === "EVENODD" ? "evenodd" : "nonzero")) break;
     }
   }
 
@@ -258,6 +354,16 @@ function drawShapeBody(ctx: CanvasRenderingContext2D, node: FigmaNode, alpha: nu
     tracePath(ctx, node);
     drawStroke(ctx, strokePaint, alpha, node.strokeWeight ?? 1);
   }
+}
+
+function drawGlassSurface(ctx: CanvasRenderingContext2D, node: FigmaNode, alpha: number): void {
+  if (!node.studioGlass?.enabled) return;
+  tracePath(ctx, node);
+  ctx.save();
+  ctx.globalAlpha = Math.min(0.22, alpha * 0.22);
+  ctx.fillStyle = "rgba(255, 255, 255, 1)";
+  ctx.fill();
+  ctx.restore();
 }
 
 function renderNode(
@@ -283,10 +389,15 @@ function renderNode(
     if (paints.length > 0) {
       tracePath(ctx, node);
       for (const paint of paints) {
-        if (paint.type === "IMAGE") continue;
+        if (paint.type === "IMAGE") {
+          if (drawImagePaint(ctx, node, paint, alpha, opts)) break;
+          continue;
+        }
         if (drawFill(ctx, paint, alpha)) break;
       }
     }
+
+    drawGlassSurface(ctx, node, alpha);
 
     if (node.clipContent) {
       tracePath(ctx, node);
@@ -301,15 +412,17 @@ function renderNode(
     if (node.type === "TEXT") {
       drawText(ctx, node, alpha);
     } else {
-      drawShapeBody(ctx, node, alpha);
+      drawShapeBody(ctx, node, alpha, opts);
     }
+    drawGlassSurface(ctx, node, alpha);
     clearShadow();
   }
 
   ctx.restore();
 
-  if (opts.selectedId === node.id || opts.hoverId === node.id) {
-    drawSelection(ctx, world, getNodeBounds(node), opts.selectedId === node.id);
+  const selected = Boolean(node.id && (opts.selectedIds?.includes(node.id) || opts.selectedId === node.id));
+  if (selected) {
+    drawSelection(ctx, world, getNodeBounds(node), true);
   }
 }
 
@@ -320,11 +433,8 @@ function drawSelection(ctx: CanvasRenderingContext2D, world: Mat, b: { x: number
   ctx.globalAlpha = 1;
   ctx.beginPath();
   ctx.rect(0, 0, b.width, b.height);
-  ctx.strokeStyle = selected ? "#0d99ff" : "#0d99ff";
-  ctx.lineWidth = selected ? 2 : 1;
-  ctx.setLineDash(selected ? [] : [4, 4]);
-  ctx.stroke();
-  ctx.setLineDash([]);
+  ctx.fillStyle = selected ? "rgba(217, 255, 74, 0.13)" : "transparent";
+  ctx.fill();
   ctx.restore();
 
   if (selected) {
@@ -339,10 +449,25 @@ function drawSelection(ctx: CanvasRenderingContext2D, world: Mat, b: { x: number
     ctx.save();
     for (const [cx, cy] of corners) {
       const [wx, wy] = apply(world, cx, cy);
-      ctx.fillStyle = "#0d99ff";
-      ctx.fillRect(wx - size / 2, wy - size / 2, size, size);
+      ctx.fillStyle = "#D9FF4A";
+      ctx.beginPath();
+      ctx.roundRect(wx - size / 2, wy - size / 2, size, size, Math.min(2, size / 3));
+      ctx.fill();
     }
     ctx.restore();
+  }
+}
+
+function drawCanvasBackdrop(ctx: CanvasRenderingContext2D, width: number, height: number, dpr: number): void {
+  ctx.fillStyle = "#111111";
+  ctx.fillRect(0, 0, width, height);
+
+  const spacing = Math.max(18, Math.round(24 * dpr));
+  ctx.fillStyle = "rgba(255, 255, 255, 0.12)";
+  for (let x = spacing; x < width; x += spacing) {
+    for (let y = spacing; y < height; y += spacing) {
+      ctx.fillRect(x, y, Math.max(1, dpr), Math.max(1, dpr));
+    }
   }
 }
 
@@ -356,8 +481,7 @@ export function renderScene(
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  drawCanvasBackdrop(ctx, canvasWidth, canvasHeight, opts.dpr);
 
   if (!page) return;
 
@@ -370,7 +494,7 @@ export function renderScene(
   setCanvasTransform(ctx, base);
 
   for (const child of page.children ?? []) {
-    renderNode(ctx, child, identity(), opts, 0);
+    renderNode(ctx, child, base, opts, 0);
   }
 
   ctx.restore();
@@ -400,4 +524,41 @@ export function hitTestNodeAt(page: FigmaNode, x: number, y: number, viewport: V
   });
 
   return hits.length > 0 ? hits[hits.length - 1] : null;
+}
+
+export function selectNodesInRect(page: FigmaNode, x: number, y: number, width: number, height: number, viewport: Viewport): string[] {
+  const base = multiply(translation(viewport.x, viewport.y), scaling(viewport.zoom, viewport.zoom));
+  const left = Math.min(x, x + width);
+  const right = Math.max(x, x + width);
+  const top = Math.min(y, y + height);
+  const bottom = Math.max(y, y + height);
+  const selected: string[] = [];
+  walkWithTransform(page, (node, world) => {
+    if (!node.id || node.type === "PAGE") return false;
+    const screen = multiply(base, world);
+    const bounds = getNodeBounds(node);
+    const corners = [
+      apply(screen, 0, 0),
+      apply(screen, bounds.width, 0),
+      apply(screen, bounds.width, bounds.height),
+      apply(screen, 0, bounds.height),
+    ];
+    const nodeLeft = Math.min(...corners.map(([px]) => px));
+    const nodeRight = Math.max(...corners.map(([px]) => px));
+    const nodeTop = Math.min(...corners.map(([, py]) => py));
+    const nodeBottom = Math.max(...corners.map(([, py]) => py));
+    if (nodeLeft >= left && nodeRight <= right && nodeTop >= top && nodeBottom <= bottom) {
+      selected.push(node.id);
+    }
+    return false;
+  });
+  const selectedSet = new Set(selected);
+  const filtered: string[] = [];
+  const removeNested = (node: FigmaNode, ancestorSelected: boolean) => {
+    const isSelected = Boolean(node.id && selectedSet.has(node.id));
+    if (isSelected && !ancestorSelected) filtered.push(node.id!);
+    for (const child of node.children ?? []) removeNested(child, ancestorSelected || isSelected);
+  };
+  removeNested(page, false);
+  return filtered;
 }
